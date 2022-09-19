@@ -1,4 +1,4 @@
-# /usr/bin/env python
+#! /usr/bin/env python
 
 
 import argparse
@@ -8,24 +8,48 @@ from datetime import datetime
 import shutil
 import sys
 
-gDescription = ""
+cDescription = ""
 
-gDotfileDir = '.dotfiles'
-gStowDir = os.path.join(os.environ.get('HOME'), gDotfileDir) 
+cDotfileDir = '.dotfiles'
+gStowDir = os.path.join(os.environ.get('HOME'), cDotfileDir)
 gTargetDir = os.environ.get('HOME')
 
-gConflictsSubdir = "conflicts"
+cConflictsSubdir = "conflicts"
 
-gNow = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+cNow = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
 cStowFile = "stow"
+
+cDefaultProfile = "default"
 
 gDry = False
 
-def get_stow_file(pkg):
-    file = os.path.join(gStowDir, pkg + ".stow.conf")
+def get_default_profile_dir():
+    default_profile = os.path.join(gStowDir, cDefaultProfile)
+    if os.path.isdir(default_profile):
+        return default_profile
+    return gStowDir
+
+def get_profile_dir(profile=None):
+    if not profile:
+        return get_default_profile_dir()
+
+    profile_dir = os.path.join(gStowDir, profile)
+
+    if not os.path.isdir(profile_dir):
+        print("Error: Did not find profile in stow dir: ", profile_dir)
+        exit(1)
+
+    return profile_dir
+
+def get_pkg_dir(pkg, profile=None):
+    pkg_dir = os.path.join(get_profile_dir(profile), pkg)
+    return pkg_dir
+
+def get_stow_file(pkg, profile=None):
+    file = os.path.join(get_profile_dir(), pkg + ".stow.conf")
     return file
 
-def create_stow_file(pkg):
+def create_stow_file(pkg, profile=None):
     return
     file = get_stow_file(pkg)
     try:
@@ -48,22 +72,16 @@ def confirm(question="", default_no=True, force_yes=False):
         return False if default_no else True
 
 def create_common_parser():
-    parser = argparse.ArgumentParser(description=gDescription)
+    parser = argparse.ArgumentParser(description=cDescription)
     parser.add_argument('cmd', type=str, choices=gCommands.keys())
     parser.add_argument('--dry', dest='dry', action='store_true', default=gDry)
+    parser.add_argument('--profile', dest='profile', type=str, required=False)
     return parser
 
-def add_to_pkg(gargs):
-    parser = create_common_parser()
-    parser.add_argument('pkg', type=str)
-    parser.add_argument('files', nargs='+')
+def add_to_pkg(pkg, files, profile=None):
+    pkg_dir = get_pkg_dir(pkg, profile)
 
-    args = parser.parse_args()
-    print(args)
-
-    pkg_dir = os.path.join(gStowDir, args.pkg)
-
-    for file in args.files:
+    for file in files:
 
         if os.path.islink(file):
             print("Is symlink: ", file)
@@ -72,21 +90,29 @@ def add_to_pkg(gargs):
         source = os.path.join(gTargetDir, relpath)
         stow = os.path.join(pkg_dir, relpath)
 
-        print("Adding to pkg [", args.pkg, "]: ", file)
+        print("Adding to pkg [", pkg, "]: ", file)
 
         if not gDry:
             os.makedirs(pkg_dir, exist_ok=True)
-            create_stow_file(args.pkg)
+            #create_stow_file(pkg, profile)
             os.makedirs(os.path.dirname(stow), exist_ok=True)
             shutil.move(source, stow)
         else:
             print("mv ", source, stow)
 
+def cmd_add_to_pkg(gargs):
+    parser = create_common_parser()
+    parser.add_argument('pkg', type=str)
+    parser.add_argument('files', nargs='+')
+
+    args = parser.parse_args()
+
+    add_to_pkg(parser.pkg, parser.files, profile=getattr(args, "profile", None))
 
 
-def get_conflict_files(pkg):
+def get_conflict_files(pkg, profile=None):
 
-    cmd = ['stow', '-t', gTargetDir, '-d', gStowDir, '-nv', pkg]
+    cmd = ['stow', '-t', gTargetDir, '-d', get_profile_dir(profile), '-nv', pkg]
 
     ps = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
     ps2 = subprocess.Popen(['grep', 'existing'], stdin=ps.stderr, stdout=subprocess.PIPE)
@@ -104,18 +130,18 @@ def get_conflict_files(pkg):
     return conflicts
 
 
-def list_conflicts(gargs):
+def cmd_list_conflicts(gargs):
     parser = create_common_parser()
     parser.add_argument('pkg', type=str)
 
     args = parser.parse_args()
 
-    files = get_conflict_files(args.pkg)
+    files = get_conflict_files(args.pkg, profile=getattr(args, "profile", None))
     print(files)
 
-def backup_conflicts(pkg, conflicts):
+def backup_conflicts(pkg, conflicts, profile=None):
     
-    backup_dir = os.path.join(gStowDir, gConflictsSubdir, pkg, gNow)
+    backup_dir = os.path.join(get_profile_dir(profile), cConflictsSubdir, pkg, cNow)
 
     if len(conflicts) == 0:
         print("No conflicts")
@@ -134,11 +160,11 @@ def backup_conflicts(pkg, conflicts):
 
 
 
-def stow_pkg(pkg):
-    conflicts = get_conflict_files(pkg)
-    backup_conflicts(pkg, conflicts)
+def stow_pkg(pkg, profile=None):
+    conflicts = get_conflict_files(pkg, profile)
+    backup_conflicts(pkg, conflicts, profile)
 
-    cmd = ['stow', '-t', gTargetDir, '-d', gStowDir, pkg]
+    cmd = ['stow', '-t', gTargetDir, '-d', get_profile_dir(profile), pkg]
     cmd_dry = cmd.copy()
     cmd_dry.append('-n')
     cmd_dry.append('--verbose=2')
@@ -147,34 +173,63 @@ def stow_pkg(pkg):
     ps1 = subprocess.run(cmd_dry, stdout=sys.stdout, stderr=sys.stderr)
     print("<------>")
 
-    if not confirm("Stow files?"):
-        return
+
 
     if not gDry:
+        if not confirm("Stow files?"):
+            return
         ps = subprocess.run(cmd, stdout=sys.stdout, stderr=sys.stderr)
 
 
 
-def stow_pkgs(gargs):
+def stow_pkgs(pkgs, profile=None):
+
+    for pkg in pkgs:
+        stow_pkg(pkg, profile=profile)
+
+def cmd_stow_pkgs(args):
     parser = create_common_parser()
     parser.add_argument('pkgs', nargs='+')
 
     args = parser.parse_args()
 
-    if len(args.pkgs) == 1 and args.pkgs[0] == "all":
-        raise NotImplementedError()
+    stow_pkgs(args.pkgs, profile=getattr(args, "profile", None))
 
+def unstow_pkg(pkg, profile=None):
 
+    profile_dir = get_profile_dir(profile)
 
-    for pkg in args.pkgs:
-        stow_pkg(pkg)
+    cmd = ['stow', '--delete', '-t', gTargetDir, '-d', profile_dir, pkg]
+    cmd_dry = cmd.copy()
+    cmd_dry.append('-nv')
 
+    print("<------>")
+    ps1 = subprocess.run(cmd_dry, stdout=sys.stdout, stderr=sys.stderr)
+    print("<------>")
 
+    if not gDry:
+        if not confirm("Unstow files?"):
+            return
+        ps = subprocess.run(cmd, stdout=sys.stdout, stderr=sys.stderr)
+
+def unstow_pkgs(pkgs, profile=None):
+
+    for pkg in pkgs:
+        unstow_pkg(pkg, profile)
+
+def cmd_unstow(gargs):
+    parser = create_common_parser()
+    parser.add_argument('pkgs', nargs='+')
+
+    args = parser.parse_args()
+
+    unstow_pkgs(args.pkgs, profile=getattr(args, "profile", None))
 
 gCommands = {
-        "add": add_to_pkg,
-        "list-conflicts": list_conflicts,
-        "stow": stow_pkgs
+        "add": cmd_add_to_pkg,
+        "list-conflicts": cmd_list_conflicts,
+        "stow": cmd_stow_pkgs,
+        "unstow": cmd_unstow
         }
 
 
@@ -186,7 +241,6 @@ def parse_args():
     
 
     args = parser.parse_args()
-
     gDry = args.dry
 
     return args
