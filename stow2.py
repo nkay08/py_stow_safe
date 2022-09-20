@@ -81,8 +81,13 @@ def create_common_parser():
 def add_to_pkg(pkg, files, profile=None):
     pkg_dir = get_pkg_dir(pkg, profile)
 
+    file_list = []
+
     for file in files:
 
+        if not os.path.exists(file):
+            print("Does not exist: ", file)
+            continue
         if os.path.islink(file):
             print("Is symlink: ", file)
             continue
@@ -90,15 +95,21 @@ def add_to_pkg(pkg, files, profile=None):
         source = os.path.join(gTargetDir, relpath)
         stow = os.path.join(pkg_dir, relpath)
 
-        print("Adding to pkg [", pkg, "]: ", file)
+        file_list.append((source, stow))
 
-        if not gDry:
-            os.makedirs(pkg_dir, exist_ok=True)
-            #create_stow_file(pkg, profile)
-            os.makedirs(os.path.dirname(stow), exist_ok=True)
-            shutil.move(source, stow)
-        else:
-            print("mv ", source, stow)
+    for f in file_list:
+        print("-- mv", f[0], "--", f[1])
+
+    if not gDry:
+        if not confirm("Add files to pkg", pkg, "?"):
+            return
+        os.makedirs(pkg_dir, exist_ok=True)
+
+        for f in file_list:
+            os.makedirs(os.path.dirname(f[0]), exist_ok=True)
+            shutil.move(f[0], f[1])
+            print("Adding to pkg [", pkg, "]: ", f[0])
+
 
 def cmd_add_to_pkg(gargs):
     parser = create_common_parser()
@@ -107,7 +118,7 @@ def cmd_add_to_pkg(gargs):
 
     args = parser.parse_args()
 
-    add_to_pkg(parser.pkg, parser.files, profile=getattr(args, "profile", None))
+    add_to_pkg(args.pkg, args.files, profile=getattr(args, "profile", None))
 
 
 def get_conflict_files(pkg, profile=None):
